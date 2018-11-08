@@ -1,0 +1,235 @@
+---
+title: "linear_models"
+author: "Xinyi Lin"
+date: "11/8/2018"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(p8105.datasets)
+
+set.seed(1)
+```
+
+```{r}
+data("nyc_airbnb")
+
+nyc_airbnb = 
+  nyc_airbnb %>% 
+  mutate(stars = review_scores_location / 2) %>% 
+  rename(boro = neighbourhood_group,
+         neighborhood = neighbourhood) %>% 
+  filter(boro != "Staten Island") %>% 
+  select(price, stars, boro, neighborhood, room_type)
+```
+
+```{r}
+fit = lm(price ~ stars + boro, data = nyc_airbnb)
+```
+
+Look at some summaries
+
+```{r}
+summary(fit)
+summary(fit)$coef
+coef(fit)
+#fitted.values(fit)
+```
+
+better summaries
+
+```{r}
+broom::tidy(fit)
+
+fit %>% 
+  broom::tidy() %>% 
+  select(term, estimate, p.value) %>% 
+  mutate(term = str_replace(term, "^boro", "Boro: "),
+         signif = ifelse(p.value < 0.05, "*", "")) %>% 
+  knitr::kable(digits = 3)
+```
+
+Look at other summaries...
+
+```{r}
+fit %>% 
+  broom::glance() %>% 
+  select(r.squared, adj.r.squared)
+```
+
+Be careful with factors...
+
+```{r}
+nyc_airbnb = 
+  nyc_airbnb %>% 
+  mutate(boro = fct_infreq(boro),
+         room_type = fct_infreq(room_type))
+
+fit2 = lm(price ~ stars + boro, data = nyc_airbnb)
+```
+
+```{r}
+nyc_airbnb = 
+  nyc_airbnb %>% 
+  mutate(boro = fct_relevel(boro, "Brooklyn"),    # "Brooklyn is used to compared"
+         room_type = fct_infreq(room_type))
+
+fit3 = lm(price ~ stars + boro, data = nyc_airbnb)
+```
+
+
+Rather than compared to Bronx, they compared to Manhatten
+
+```{r}
+summary(fit2)
+
+summary(fit3)
+```
+
+## Diagnostics
+
+```{r}
+fit2 %>% 
+  modelr::add_residuals(data = nyc_airbnb) %>% 
+  ggplot(aes(x = boro, y = resid)) +
+  geom_boxplot()
+```
+
+```{r}
+fit2 %>% 
+  modelr::add_residuals(data = nyc_airbnb) %>% 
+  ggplot(aes(x = stars, y = resid)) +
+  geom_point()
+```
+
+```{r}
+nyc_airbnb %>% 
+  modelr::add_predictions(fit2) %>% 
+  ggplot(aes(x = stars, y = pred, color = boro)) + geom_point()
+```
+
+## Testing
+
+```{r}
+fit2 %>% 
+  broom::tidy()
+```
+
+Compare nested models
+
+```{r}
+fit_null = lm(price ~ stars + boro, data = nyc_airbnb)
+fit_alt = lm(price ~ stars + boro + room_type, data = nyc_airbnb)
+```
+
+```{r}
+fit_null %>% 
+  broom::tidy()
+
+fit_alt %>% 
+  broom::tidy()
+```
+
+```{r}
+anova(fit_null, fit_alt) %>% 
+  broom::tidy()
+```
+
+## Nesting data
+
+Multiply of boro
+
+```{r}
+nyc_airbnb %>% 
+  lm(price ~ stars * boro + room_type * boro, data = .) %>% 
+  broom::tidy() %>% 
+  knitr::kable(digits = 3)
+```
+
+Nesting and fitting
+
+```{r}
+nest_lm_res =
+  nyc_airbnb %>% 
+  group_by(boro) %>% 
+  nest() %>% 
+  mutate(models = map(data, ~lm(price ~ stars + room_type, data = .x)),
+         models = map(models, broom::tidy)) %>% 
+  select(-data) %>% 
+  unnest()
+
+nest_lm_res
+```
+
+Let's go nuts 
+
+```{r}
+manhattan_airbnb =
+  nyc_airbnb %>% 
+  filter(boro == "Manhattan")
+
+manhattan_nest_lm_res =
+  manhattan_airbnb %>% 
+  group_by(neighborhood) %>% 
+  nest() %>% 
+  mutate(models = map(data, ~lm(price ~ stars + room_type, data = .x)),
+         models = map(models, broom::tidy)) %>% 
+  select(-data) %>% 
+  unnest()
+```
+
+View some results
+
+```{r}
+manhattan_nest_lm_res %>% 
+  filter(str_detect(term, "room_type")) %>% 
+  ggplot(aes(x = neighborhood, y = estimate)) +
+  geom_point() +
+  facet_wrap(~term) + 
+  theme(axis.text.x = element_text(angle = 80, hjust = 1))
+```
+
+## Binary outcome
+
+```{r}
+baltimore_df = 
+  read_csv("data/homicide-data.csv") %>% 
+  filter(city == "Baltimore") %>% 
+  mutate(resolved = as.numeric(disposition == "Closed by arrest"),
+         victim_age = as.numeric(victim_age),
+         victim_race = fct_relevel(victim_race, "White")) %>% 
+  select(resolved, victim_age, victim_race, victim_sex)
+
+head(baltimore_df)
+```
+
+```{r}
+fit_logistic = 
+  baltimore_df %>% 
+  glm(resolved ~ victim_age + victim_race + victim_sex, data = ., family = binomial()) 
+```
+
+```{r}
+summary(fit_logistic)
+```
+
+```{r}
+fit_logistic %>% 
+  broom::tidy()
+```
+
+```{r}
+fit_logistic %>% 
+  broom::tidy() %>% 
+  mutate(OR = boot::inv.logit(estimate)) %>% 
+  knitr::kable(digits = 3)
+```
+
+```{r}
+baltimore_df %>% 
+  ggplot(aes(x = victim_age, y = resolved)) +
+  geom_point() +
+  geom_smooth()
+```
+
